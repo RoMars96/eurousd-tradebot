@@ -9,6 +9,8 @@ cloud dev container).
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 
 try:
@@ -69,5 +71,53 @@ def fetch_rates(symbol: str, timeframe: str, count: int) -> pd.DataFrame:
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
     df = df.set_index("time").sort_index()
+    df = df.rename(columns={"tick_volume": "volume"})
+    return df[["open", "high", "low", "close", "volume"]]
+
+
+def fetch_rates_range(
+    symbol: str, timeframe: str, start: dt.datetime, end: dt.datetime
+) -> pd.DataFrame:
+    """Fetch all completed candles between `start` and `end` (both UTC).
+
+    This pulls history directly from your broker through the running MT5
+    terminal -- free, no third-party data provider needed. Most brokers
+    carry many years of M15/M1 history for a major pair like EURUSD. MT5
+    caps a single call's result set, so this pages through the range in
+    chunks automatically.
+    """
+    _require_mt5()
+    tf_attr = _TIMEFRAME_MAP.get(timeframe.upper())
+    if tf_attr is None:
+        raise ValueError(f"Unsupported timeframe {timeframe!r}")
+    tf = getattr(mt5, tf_attr)
+
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=dt.timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=dt.timezone.utc)
+
+    chunks: list[pd.DataFrame] = []
+    chunk_start = start
+    chunk_span = dt.timedelta(days=180)  # comfortably under MT5's per-call bar cap
+
+    while chunk_start < end:
+        chunk_end = min(chunk_start + chunk_span, end)
+        rates = mt5.copy_rates_range(symbol, tf, chunk_start, chunk_end)
+        if rates is not None and len(rates):
+            chunk_df = pd.DataFrame(rates)
+            chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s", utc=True)
+            chunks.append(chunk_df)
+        chunk_start = chunk_end
+
+    if not chunks:
+        raise RuntimeError(
+            f"MT5 returned no data for {symbol} {timeframe} between {start} and {end}: "
+            f"{mt5.last_error()}"
+        )
+
+    df = pd.concat(chunks, ignore_index=True)
+    df = df.set_index("time").sort_index()
+    df = df[~df.index.duplicated(keep="first")]
     df = df.rename(columns={"tick_volume": "volume"})
     return df[["open", "high", "low", "close", "volume"]]

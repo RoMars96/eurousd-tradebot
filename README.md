@@ -67,10 +67,27 @@ pip install -e ".[mt5]"          # only on the Windows machine that runs MT5
 pytest                           # run the test suite
 ```
 
+### Get historical data (free, no Dukascopy needed)
+
+You don't need a third-party tick-data provider. Your own broker's MT5
+history is free and plenty -- most brokers carry many years of M15/M1 data
+for a major pair like EURUSD. On the Windows machine with MT5 installed
+and logged in to a (demo is fine) account:
+
+```bash
+python scripts/fetch_mt5_history.py --login <login> --password *** \
+    --server "YourBroker-Demo" --symbol EURUSD --timeframe M15 \
+    --start 2015-01-01 --end 2026-01-01 --out eurusd_m15.csv
+```
+
+This writes a CSV directly in the format `run_backtest.py` expects. (You
+can also do this manually: MT5 -> View -> History Center -> EURUSD -> M15
+-> Download, then right-click the chart -> "Save As".)
+
 ### Backtest against historical data
 
-Export M15 history from MT5 (`File -> Export to CSV` on a chart, or via the
-Strategy Tester) with columns `time,open,high,low,close`, then:
+Once you have a CSV (columns `time,open,high,low,close`) -- from the script
+above, an MT5 export, or any other source:
 
 ```bash
 python scripts/run_backtest.py --csv path/to/eurusd_m15.csv --trades-out trades.csv
