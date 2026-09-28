@@ -1,0 +1,55 @@
+# EUR/USD liquidity-sweep strategy configuration.
+# All prices/pips assume EUR/USD 5-decimal broker quoting (pip = 0.0001).
+
+symbol: EURUSD
+entry_timeframe: M15
+
+sessions:
+  # UTC hour ranges used to build the "resting liquidity" range.
+  asian:
+    start_hour: 0
+    end_hour: 7
+  london:
+    start_hour: 7
+    end_hour: 10
+  new_york:
+    start_hour: 12
+    end_hour: 16
+
+range_detection:
+  use_session_range: true
+  use_swing_pivots: true
+  swing_lookback_bars: 50          # bars of entry_timeframe scanned for pivots
+  swing_pivot_width: 3             # bars on each side to confirm a fractal pivot
+  equal_level_tolerance_atr_mult: 0.1   # "equal highs/lows" tolerance = 0.1 * ATR14
+  session_search_horizon_bars: 80  # how many bars after a session ends to watch for a sweep
+
+sweep:
+  min_pierce_pips: 2.0             # wick must clear the level by at least this much
+  rejection_max_bars: 2            # close must come back inside range within N bars
+
+displacement:
+  atr_period: 14
+  body_atr_multiplier: 1.5         # displacement candle body >= 1.5 * ATR14
+  max_bars_after_rejection: 3
+
+entry:
+  stop_buffer_pips: 1.5            # extra pips beyond the sweep wick for the SL
+  take_profit_r_multiple: 2.0
+
+trailing_stop:
+  enabled: true
+  breakeven_trigger_r: 1.0         # move SL to breakeven once trade is +1R
+  trail_atr_multiplier: 1.0        # beyond that, trail SL this many ATR behind price
+
+risk:
+  risk_per_trade_pct: 0.5
+  max_concurrent_positions: 1
+  daily_loss_limit_pct: 2.0
+  pip_value_per_standard_lot: 10.0   # USD per pip per 1.0 lot, approx for EURUSD
+  pip_size: 0.0001
+
+backtest:
+  starting_equity: 10000
+  spread_pips: 1.0
+  slippage_pips: 0.2
