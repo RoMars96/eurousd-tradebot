@@ -182,6 +182,26 @@ def test_dukascopy_node_csv_with_epoch_ms_timestamps(tmp_path):
     assert df.index[1] - df.index[0] == pd.Timedelta(minutes=15)
 
 
+def test_make_rates_csv_merges_fred_style_files(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("make_rates_csv", "scripts/make_rates_csv.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    (tmp_path / "uk.csv").write_text("observation_date,IRSTCI01GBM156N\n2024-01-01,5.2\n2024-02-01,.\n2024-03-01,5.1\n")
+    (tmp_path / "jp.csv").write_text("DATE,IRSTCI01JPM156N\n2024-01-01,-0.02\n2024-02-01,-0.01\n2024-03-01,0.05\n")
+
+    merged = mod.merge_rates(mod.read_series(tmp_path / "uk.csv", "uk"), mod.read_series(tmp_path / "jp.csv", "jp"))
+    out = tmp_path / "rates.csv"
+    merged.to_csv(out, date_format="%Y-%m-%d")
+
+    rates = carry_h.load_rates_csv(out)
+    assert list(rates.columns) == ["uk", "jp"]
+    assert rates["uk"].iloc[1] == pytest.approx(5.2)  # "." gap forward-filled
+    assert rates["jp"].iloc[-1] == pytest.approx(0.05)
+
+
 # --- the pipeline itself ----------------------------------------------------
 
 def test_pipeline_finds_no_edge_in_pure_noise(tmp_path):
