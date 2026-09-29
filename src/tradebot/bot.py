@@ -22,6 +22,7 @@ from tradebot.config import StrategyConfig
 from tradebot.data import mt5_feed
 from tradebot.execution.broker import Broker, ClosedTrade
 from tradebot.journal import JournalEntry, TradeJournal
+from tradebot.news.blackout import NewsCalendarGuard
 from tradebot.risk.edge_guard import EdgeConfidenceGuard
 from tradebot.risk.guard import RiskGuard
 from tradebot.risk.position_sizing import calculate_lots
@@ -90,6 +91,7 @@ class TradingBot:
             min_sample_size=config.get("edge_guard", "min_sample_size", default=30),
             degradation_threshold_r=config.get("edge_guard", "degradation_threshold_r", default=0.0),
         )
+        self.news_guard = NewsCalendarGuard(config)
         self._acted_on: set[pd.Timestamp] = set()
         # position_id -> initial_stop, needed by the trailing-stop calculation
         self._initial_stops: dict[str, float] = {}
@@ -162,6 +164,11 @@ class TradingBot:
         edge_status = self.edge_guard.evaluate(self.journal.load_all())
         if not edge_status.can_trade:
             log.warning("Edge confidence guard blocking new entries: %s", edge_status.reason)
+            return
+
+        news_status = self.news_guard.evaluate(dt.datetime.now(dt.timezone.utc))
+        if news_status.in_blackout:
+            log.info("News calendar guard blocking new entries: %s", news_status.reason)
             return
 
         signals = generate_signals(df, self.config)

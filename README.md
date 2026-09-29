@@ -43,13 +43,16 @@ src/tradebot/
   data/loader.py               historical OHLC CSV loader
   data/mt5_feed.py              live MT5 candle feed (Windows/MT5-terminal only)
   strategy/                     sessions, swing pivots, ATR, signal generation
-  risk/                         position sizing, trailing stop, daily-loss guard
+  risk/                         position sizing, trailing stop, daily-loss guard, edge-confidence guard
+  news/                          economic calendar fetch/cache + blackout filter
   backtest/                     bar-by-bar simulator + performance metrics
   execution/                    broker interface, paper broker, MT5 order execution
+  journal.py                    persistent trade journal (paper + live)
   bot.py                        live/paper trading loop
 scripts/
   run_backtest.py                CLI: backtest a CSV of historical data
   run_live.py                    CLI: run live/paper against a running MT5 terminal
+  check_news_calendar.py         CLI: smoke-test the Finnhub calendar integration
 tests/                          pytest suite (synthetic data, no MT5 required)
 ```
 
@@ -122,6 +125,35 @@ python scripts/run_live.py --mode live --login <live_login> --password *** \
 
 You'll be asked to type a confirmation phrase before any real order can be
 placed.
+
+### News/economic calendar filter (optional, off by default)
+
+A mechanical, non-predictive blackout filter that blocks *new* entries in a
+window around known high-impact economic events (NFP, FOMC/ECB rate
+decisions, CPI) -- it doesn't interpret news or try to guess market
+direction, it just avoids volatility that has nothing to do with the
+liquidity-sweep setup. Already-open trades are never touched by it. See
+`PHILOSOPHY.md` for why a sentiment/headline-reacting version of this was
+deliberately not built.
+
+1. Get a free API key at https://finnhub.io/register
+2. `export FINNHUB_API_KEY=your_key_here`
+3. Verify the integration on a machine with network access (this was built
+   in a sandbox with none, so it hasn't been checked against a live
+   response -- see the module docstring in
+   `src/tradebot/news/calendar_feed.py`):
+   ```bash
+   python scripts/check_news_calendar.py
+   ```
+   Eyeball a couple of known events (e.g. does an NFP release show up at
+   08:30 America/New_York?) before trusting it.
+4. Set `news_filter.enabled: true` in `config/strategy.yaml`.
+
+If the calendar can't be fetched at all (no key, network down, API
+change), it fails open by default (`fail_open_if_unavailable: true`) --
+trading continues normally rather than being silently blocked by an
+external dependency's outage. Flip that to `false` if you'd rather halt
+than trade blind to a missed calendar refresh.
 
 ## Risk defaults
 

@@ -70,3 +70,21 @@ safety_ceilings:
   max_risk_per_trade_pct: 2.0
   max_daily_loss_limit_pct: 5.0
   max_concurrent_positions: 3
+
+# Mechanical, non-predictive blackout filter: blocks NEW entries around
+# known high-impact economic events (NFP, FOMC/ECB rate decisions, CPI).
+# It does not interpret the news, it just avoids volatility that has
+# nothing to do with the liquidity-sweep setup. Already-open trades are
+# never touched by this. Requires a free API key from https://finnhub.io
+# set via the FINNHUB_API_KEY environment variable. See README.md.
+news_filter:
+  enabled: false            # off by default until you've set an API key
+  api_key_env: FINNHUB_API_KEY
+  countries: ["US", "EU"]
+  impact_levels: ["high"]
+  minutes_before: 30
+  minutes_after: 30
+  lookahead_days: 7
+  refresh_interval_hours: 12
+  cache_path: data/economic_calendar_cache.json
+  fail_open_if_unavailable: true   # if the calendar can't be fetched at all, trade normally rather than halt
