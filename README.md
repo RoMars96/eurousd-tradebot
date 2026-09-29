@@ -18,6 +18,54 @@ and let the bot -- not a gut feeling -- govern its own graduation from paper
 to live and its own pause/resume when its edge looks degraded. That doc is
 the actual reference future changes get checked against.
 
+## Research: looking for a real edge (start here)
+
+Nothing in this repo has a proven edge yet. Before any strategy gets
+traded (paper or live), it has to survive `scripts/research.py`, which
+runs anywhere, Mac included, with no MT5 connection needed. Current
+focus is GBP/JPY (`config/gbpjpy.yaml`) with two hypotheses:
+
+- `session-open`: when London opens beyond the Asian range, does price
+  reverse (the liquidity-sweep folklore) or break out? Both are tested.
+- `carry`: does the UK-Japan interest-rate differential (its level, or its
+  recent change) predict GBP/JPY, including the swap you earn or pay?
+
+What it does to each: seals the last 20% of the data as a holdout,
+evaluates every parameter combination net of costs, runs a walk-forward
+(parameters picked on the past, scored on the future), tests significance
+against a random-timing / sign-flip null, corrects for every configuration
+you've *ever* tested (logged in `data/research_log.jsonl`), and checks
+the result isn't a single lucky parameter setting. The verdict is either
+**CANDIDATE EDGE** (every check passed) or **NO EDGE FOUND**. The pipeline
+itself is tested: it reports no edge on random-walk data and finds an edge
+planted in synthetic data (`tests/test_research.py`).
+
+**Get price data on a Mac** (MT5 for Mac from IC Markets works for this):
+View -> Symbols -> Bars tab -> GBPJPY, M15, widest date range -> Request ->
+Export Bars. That native export is in broker time; the scripts detect it
+and convert to UTC using `broker_time` in the config.
+
+**Get rates data for `carry`**: a CSV with columns `date,uk,jp` in percent,
+any frequency (e.g. Bank of England Bank Rate and Bank of Japan policy
+rate histories, or short-term interbank rates -- FRED's
+`IR3TIB01GBM156N` / `IR3TIB01JPM156N` may work; check they're still
+updated).
+
+```bash
+python scripts/research.py session-open --csv GBPJPY_M15.csv --config config/gbpjpy.yaml
+python scripts/research.py carry --csv GBPJPY_M15.csv --rates uk_jp_rates.csv --config config/gbpjpy.yaml
+```
+
+Rules that keep this honest:
+- `--reveal-holdout` only after a CANDIDATE EDGE verdict, and only once.
+  Revealing it, then tweaking and re-testing, turns the holdout into more
+  training data.
+- NO EDGE FOUND means stop, not "adjust the parameters until it passes".
+  Every adjustment is another test and raises the bar via the log.
+- The cost (`research.cost_pips`, 3 pips) and swap assumptions in
+  `config/gbpjpy.yaml` are estimates -- replace them with your account's
+  real GBPJPY spread, commission and swap rates.
+
 ## Strategy
 
 1. **Range** -- the Asian session (00:00-07:00 UTC) high/low, and/or

@@ -1,0 +1,112 @@
+# GBP/JPY configuration. Same structure as strategy.yaml; see that file for
+# what each section means. Differences are JPY quoting (pip = 0.01), the
+# larger volatility, the wider spread, and the `research` section used by
+# scripts/research.py.
+
+symbol: GBPJPY
+entry_timeframe: M15
+
+# UNVERIFIED IC Markets convention -- confirm with scripts/check_broker_time_offset.py.
+broker_time:
+  utc_offset_hours_standard: 2
+  utc_offset_hours_dst: 3
+  dst_rule: eu
+
+sessions:
+  asian:
+    start_hour: 0
+    end_hour: 7
+  london:
+    start_hour: 7
+    end_hour: 10
+  new_york:
+    start_hour: 12
+    end_hour: 16
+
+range_detection:
+  use_session_range: true
+  use_swing_pivots: true
+  swing_lookback_bars: 50
+  swing_pivot_width: 3
+  equal_level_tolerance_atr_mult: 0.1
+  session_search_horizon_bars: 80
+
+sweep:
+  min_pierce_pips: 5.0
+  rejection_max_bars: 2
+
+displacement:
+  atr_period: 14
+  body_atr_multiplier: 1.5
+  max_bars_after_rejection: 3
+
+entry:
+  stop_buffer_pips: 3.0
+  take_profit_r_multiple: 2.0
+
+trailing_stop:
+  enabled: true
+  breakeven_trigger_r: 1.0
+  trail_atr_multiplier: 1.0
+
+risk:
+  risk_per_trade_pct: 1.0
+  max_concurrent_positions: 1
+  daily_loss_limit_pct: 3.0
+  # 1 lot = 100,000 GBP; 1 pip = 0.01 JPY -> 1,000 JPY per pip per lot.
+  # In USD that's 1000 / USDJPY (~$6.7 at 150). It drifts with USDJPY.
+  pip_value_per_standard_lot: 6.7
+  pip_size: 0.01
+
+backtest:
+  starting_equity: 100
+  spread_pips: 1.5
+  slippage_pips: 0.5
+  min_sample_size: 30
+
+edge_guard:
+  min_sample_size: 30
+  degradation_threshold_r: 0.0
+  min_paper_trades_before_live: 30
+
+safety_ceilings:
+  max_risk_per_trade_pct: 2.0
+  max_daily_loss_limit_pct: 5.0
+  max_concurrent_positions: 3
+
+news_filter:
+  enabled: false
+  api_key_env: FINNHUB_API_KEY
+  countries: ["GB", "JP"]   # Finnhub country codes -- verify with check_news_calendar.py
+  impact_levels: ["high"]
+  minutes_before: 30
+  minutes_after: 30
+  lookahead_days: 7
+  refresh_interval_hours: 12
+  cache_path: data/economic_calendar_cache_gbpjpy.json
+  fail_open_if_unavailable: true
+
+# scripts/research.py -- see README "Research: looking for a real edge".
+research:
+  # Round-trip cost per trade in pips. Assumed: ~1.5 raw spread + ~1.0
+  # commission ($7/lot at ~$6.7/pip) + 0.5 slippage. UNVERIFIED -- check
+  # your account's actual GBPJPY spread and commission and adjust.
+  cost_pips: 3.0
+  holdout_fraction: 0.2        # last 20% of the data is sealed until --reveal-holdout
+  walk_forward_folds: 5
+  permutations: 1000
+  significance: 0.05           # before multiple-testing correction
+  log_path: data/research_log.jsonl
+
+  session_open:
+    min_trades_per_fold: 20
+    variants: [reversal, breakout]
+    pierce_pips: [0, 5, 10, 20]
+    horizon_bars: [4, 8, 16]    # M15 bars: 1h, 2h, 4h
+
+  carry:
+    min_trades_per_fold: 12
+    publication_lag_months: 1   # rate data for month t isn't known until after t ends
+    swap_efficiency: 0.6        # share of positive carry the broker actually pays; negative carry charged in full
+    level_min_diff: [0.0, 0.5, 1.0]
+    momentum_lookback_months: [1, 3, 6]

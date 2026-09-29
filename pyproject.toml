@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "EUR/USD liquidity-sweep trading bot for MT5"
 requires-python = ">=3.10"
 dependencies = [
-    "pandas>=2.0",
+    "pandas>=2.2",
     "numpy>=1.24",
     "PyYAML>=6.0",
     "requests>=2.31",

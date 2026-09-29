@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tradebot.backtest.engine import run_backtest
 from tradebot.backtest.metrics import compute_metrics
 from tradebot.config import DEFAULT_CONFIG_PATH, StrategyConfig
-from tradebot.data.loader import load_ohlc_csv
+from tradebot.data.loader import load_ohlc_for_research
 
 
 def main() -> None:
@@ -31,7 +31,9 @@ def main() -> None:
     args = parser.parse_args()
 
     config = StrategyConfig.from_yaml(args.config)
-    df = load_ohlc_csv(args.csv)
+    df, corrected = load_ohlc_for_research(args.csv, config)
+    if corrected:
+        print("Detected a raw MT5 export: converted broker server time to UTC using broker_time in the config.")
     print(f"Loaded {len(df)} bars from {args.csv} ({df.index[0]} -> {df.index[-1]})")
 
     result = run_backtest(df, config)
