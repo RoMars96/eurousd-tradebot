@@ -8,8 +8,11 @@ Usage:
     python scripts/run_live.py --mode paper --login 12345678 \
         --password *** --server "Broker-Demo" [--config config/strategy.yaml]
 
-Start with --mode paper against a DEMO account. Only use --mode live once
-you've validated the strategy via backtesting and a real-time paper run.
+Start with --mode paper against a DEMO account. --mode live is gated
+automatically: it refuses to start until the paper journal (see
+PHILOSOPHY.md / edge_guard.min_paper_trades_before_live in the config) has
+accumulated enough closed trades to judge the edge by. There is no flag to
+bypass this -- it's a deliberate, code-level guardrail, not a suggestion.
 """
 from __future__ import annotations
 
@@ -25,6 +28,11 @@ from tradebot.config import DEFAULT_CONFIG_PATH, StrategyConfig
 from tradebot.data import mt5_feed
 from tradebot.execution.mt5_broker import MT5Broker
 from tradebot.execution.paper_broker import PaperBroker
+from tradebot.journal import TradeJournal
+
+
+def _journal_path(data_dir: Path, symbol: str, mode: str) -> Path:
+    return data_dir / f"{mode}_journal_{symbol}.jsonl"
 
 
 def main() -> None:
@@ -34,28 +42,46 @@ def main() -> None:
     parser.add_argument("--password", required=True)
     parser.add_argument("--server", required=True, help="MT5 broker server name")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
+    parser.add_argument("--data-dir", default="data", help="Where trade journals are stored")
     parser.add_argument("--paper-equity", type=float, default=10000.0)
     parser.add_argument("--poll-seconds", type=int, default=30)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    config = StrategyConfig.from_yaml(args.config)
-
-    mt5_feed.connect(args.login, args.password, args.server)
+    config = StrategyConfig.from_yaml(args.config)  # raises UnsafeConfigError over the ceilings
+    data_dir = Path(args.data_dir)
+    symbol = config["symbol"]
 
     if args.mode == "live":
+        min_paper_trades = config.get("edge_guard", "min_paper_trades_before_live", default=30)
+        paper_journal = TradeJournal(_journal_path(data_dir, symbol, "paper"))
+        paper_trade_count = paper_journal.count()
+        if paper_trade_count < min_paper_trades:
+            print(
+                f"Refusing to start in --mode live: only {paper_trade_count} paper trade(s) "
+                f"recorded at {paper_journal.path}, need {min_paper_trades} before the bot will "
+                "trust its own real-time performance enough to risk real money. Run --mode paper "
+                "for longer first. (See PHILOSOPHY.md -- this gate is not meant to be bypassed.)"
+            )
+            sys.exit(1)
+
         confirm = input(
             "Type 'I UNDERSTAND THE RISK' to confirm you want to trade a REAL account: "
         )
         if confirm.strip() != "I UNDERSTAND THE RISK":
             print("Aborting.")
             return
-        broker = MT5Broker(config["symbol"])
+
+    mt5_feed.connect(args.login, args.password, args.server)
+
+    if args.mode == "live":
+        broker = MT5Broker(symbol)
     else:
         broker = PaperBroker(args.paper_equity)
 
-    bot = TradingBot(config, broker, poll_seconds=args.poll_seconds)
+    journal_path = _journal_path(data_dir, symbol, args.mode)
+    bot = TradingBot(config, broker, str(journal_path), args.mode, poll_seconds=args.poll_seconds)
     try:
         bot.run_forever()
     finally:

@@ -17,9 +17,11 @@ def test_backtest_runs_end_to_end_and_closes_a_winning_trade():
     assert trade.direction == "long"
     assert trade.exit_reason in {"take_profit", "stop", "end_of_data"}
 
-    metrics = compute_metrics(result.trades, result.equity_curve)
+    metrics = compute_metrics(result.trades, result.equity_curve, min_sample_size=30)
     assert metrics.total_trades == len(result.trades)
     assert metrics.final_equity == result.equity_curve.iloc[-1]
+    assert metrics.sufficient_sample is False  # one engineered trade, well below 30
+    assert metrics.min_sample_size == 30
 
 
 def test_metrics_on_no_trades_is_safe():
@@ -31,3 +33,4 @@ def test_metrics_on_no_trades_is_safe():
     assert metrics.total_trades == 0
     assert metrics.win_rate_pct == 0.0
     assert metrics.profit_factor == 0.0
+    assert metrics.sufficient_sample is False

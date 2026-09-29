@@ -15,6 +15,23 @@ class Position:
     take_profit_price: float
 
 
+@dataclass
+class ClosedTrade:
+    """A completed trade, reported by a broker for journaling.
+
+    `initial_stop` (the stop as placed, before any trailing) is what the
+    journal needs to compute an R-multiple -- `Position.stop_price` may have
+    since moved.
+    """
+
+    position_id: str
+    direction: str
+    lots: float
+    entry_price: float
+    exit_price: float
+    initial_stop: float
+
+
 class Broker(Protocol):
     def get_equity(self) -> float: ...
 

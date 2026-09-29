@@ -7,13 +7,15 @@ import itertools
 
 import pandas as pd
 
-from tradebot.execution.broker import Position
+from tradebot.execution.broker import ClosedTrade, Position
 
 
 class PaperBroker:
     def __init__(self, starting_equity: float) -> None:
         self._equity = starting_equity
         self._positions: dict[str, Position] = {}
+        self._initial_stops: dict[str, float] = {}
+        self._recent_closes: list[ClosedTrade] = []
         self._id_counter = itertools.count(1)
 
     def get_equity(self) -> float:
@@ -33,6 +35,7 @@ class PaperBroker:
         pos_id = str(next(self._id_counter))
         position = Position(pos_id, direction, lots, entry_price, stop_price, take_profit_price)
         self._positions[pos_id] = position
+        self._initial_stops[pos_id] = stop_price
         return position
 
     def modify_stop(self, position_id: str, new_stop_price: float) -> None:
@@ -50,6 +53,24 @@ class PaperBroker:
             else (position.entry_price - exit_price) / pip_size
         )
         self._equity += pip_diff * pip_value_per_standard_lot * position.lots
+
+        initial_stop = self._initial_stops.pop(position_id, position.stop_price)
+        self._recent_closes.append(
+            ClosedTrade(
+                position_id=position_id,
+                direction=position.direction,
+                lots=position.lots,
+                entry_price=position.entry_price,
+                exit_price=exit_price,
+                initial_stop=initial_stop,
+            )
+        )
+
+    def pop_recent_closes(self) -> list[ClosedTrade]:
+        """Return and clear trades closed since the last call -- for journaling."""
+        closes = self._recent_closes
+        self._recent_closes = []
+        return closes
 
     def check_exits(self, bar: pd.Series) -> None:
         """Close any position whose stop or take-profit was hit by this bar.

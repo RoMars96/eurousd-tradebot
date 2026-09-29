@@ -53,3 +53,20 @@ backtest:
   starting_equity: 10000
   spread_pips: 1.0
   slippage_pips: 0.2
+  min_sample_size: 30      # trades needed before backtest metrics are trusted (Trading in the Zone)
+
+# Self-governing circuit breaker -- see PHILOSOPHY.md. The bot judges its
+# own edge over a trailing sample rather than reacting to any single trade,
+# and gates its own graduation from paper to live trading.
+edge_guard:
+  min_sample_size: 30            # closed trades needed before this can ever halt trading
+  degradation_threshold_r: 0.0   # halt new entries if trailing avg R-multiple drops below this
+  min_paper_trades_before_live: 30   # run_live.py --mode live refuses to start below this
+
+# Hard ceilings enforced at config load time. These exist so an impulsive
+# edit to the numbers above (larger risk after a losing streak, etc.) can't
+# silently slip through -- see PHILOSOPHY.md "Rules of engagement".
+safety_ceilings:
+  max_risk_per_trade_pct: 2.0
+  max_daily_loss_limit_pct: 5.0
+  max_concurrent_positions: 3

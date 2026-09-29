@@ -7,6 +7,8 @@ import pandas as pd
 
 from tradebot.backtest.engine import Trade
 
+DEFAULT_MIN_SAMPLE_SIZE = 30
+
 
 @dataclass
 class BacktestMetrics:
@@ -18,6 +20,8 @@ class BacktestMetrics:
     total_pnl: float
     max_drawdown_pct: float
     final_equity: float
+    sufficient_sample: bool
+    min_sample_size: int
 
 
 def _max_drawdown_pct(equity_curve: pd.Series) -> float:
@@ -28,10 +32,33 @@ def _max_drawdown_pct(equity_curve: pd.Series) -> float:
     return float(max(0.0, -drawdown.min() * 100.0))
 
 
-def compute_metrics(trades: list[Trade], equity_curve: pd.Series) -> BacktestMetrics:
+def compute_metrics(
+    trades: list[Trade],
+    equity_curve: pd.Series,
+    min_sample_size: int = DEFAULT_MIN_SAMPLE_SIZE,
+) -> BacktestMetrics:
+    """Compute performance stats.
+
+    `sufficient_sample` flags whether `total_trades >= min_sample_size`.
+    Per "Trading in the Zone": wins and losses are randomly distributed
+    across a given edge's trades, so no conclusion -- good or bad -- should
+    be drawn from a handful of them. Treat metrics from a small sample as
+    noise, not as a verdict on the strategy.
+    """
     if not trades:
         final_equity = float(equity_curve.iloc[-1]) if not equity_curve.empty else 0.0
-        return BacktestMetrics(0, 0.0, 0.0, 0.0, 0.0, 0.0, _max_drawdown_pct(equity_curve), final_equity)
+        return BacktestMetrics(
+            total_trades=0,
+            win_rate_pct=0.0,
+            avg_r_multiple=0.0,
+            expectancy_r=0.0,
+            profit_factor=0.0,
+            total_pnl=0.0,
+            max_drawdown_pct=_max_drawdown_pct(equity_curve),
+            final_equity=final_equity,
+            sufficient_sample=False,
+            min_sample_size=min_sample_size,
+        )
 
     wins = [t for t in trades if t.pnl > 0]
     losses = [t for t in trades if t.pnl <= 0]
@@ -60,4 +87,6 @@ def compute_metrics(trades: list[Trade], equity_curve: pd.Series) -> BacktestMet
         total_pnl=total_pnl,
         max_drawdown_pct=_max_drawdown_pct(equity_curve),
         final_equity=final_equity,
+        sufficient_sample=len(trades) >= min_sample_size,
+        min_sample_size=min_sample_size,
     )

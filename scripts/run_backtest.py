@@ -35,7 +35,8 @@ def main() -> None:
     print(f"Loaded {len(df)} bars from {args.csv} ({df.index[0]} -> {df.index[-1]})")
 
     result = run_backtest(df, config)
-    metrics = compute_metrics(result.trades, result.equity_curve)
+    min_sample_size = config.get("backtest", "min_sample_size", default=30)
+    metrics = compute_metrics(result.trades, result.equity_curve, min_sample_size=min_sample_size)
 
     print(f"\nSignals generated: {len(result.signals)}")
     print(f"Trades taken:       {metrics.total_trades}")
@@ -46,6 +47,15 @@ def main() -> None:
     print(f"Total P&L:          {metrics.total_pnl:.2f}")
     print(f"Max drawdown:       {metrics.max_drawdown_pct:.1f}%")
     print(f"Final equity:       {metrics.final_equity:.2f}")
+
+    if not metrics.sufficient_sample:
+        print(
+            f"\nNOTE: only {metrics.total_trades} trade(s), below the "
+            f"{metrics.min_sample_size}-trade minimum this project treats as meaningful. "
+            "Per Trading in the Zone: wins and losses are randomly distributed across "
+            "an edge's trades, so nothing above should be read as a verdict yet -- "
+            "get more historical data before drawing conclusions."
+        )
 
     if args.trades_out:
         import pandas as pd

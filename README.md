@@ -11,6 +11,13 @@ an engineering + research project first, and validate thoroughly (backtest
 -> demo paper trading for weeks -> small live size) before trusting it with
 real money.
 
+**See [PHILOSOPHY.md](PHILOSOPHY.md).** This project is built around Mark
+Douglas's *Trading in the Zone*: judge the system over a large sample never
+a single trade, define risk before entry and never renegotiate it mid-trade,
+and let the bot -- not a gut feeling -- govern its own graduation from paper
+to live and its own pause/resume when its edge looks degraded. That doc is
+the actual reference future changes get checked against.
+
 ## Strategy
 
 1. **Range** -- the Asian session (00:00-07:00 UTC) high/low, and/or

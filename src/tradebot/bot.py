@@ -12,6 +12,7 @@ switching to `mode="live"`.
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import time
 
@@ -19,7 +20,9 @@ import pandas as pd
 
 from tradebot.config import StrategyConfig
 from tradebot.data import mt5_feed
-from tradebot.execution.broker import Broker
+from tradebot.execution.broker import Broker, ClosedTrade
+from tradebot.journal import JournalEntry, TradeJournal
+from tradebot.risk.edge_guard import EdgeConfidenceGuard
 from tradebot.risk.guard import RiskGuard
 from tradebot.risk.position_sizing import calculate_lots
 from tradebot.risk.trailing_stop import update_trailing_stop
@@ -29,16 +32,50 @@ from tradebot.strategy.liquidity_sweep import generate_signals
 log = logging.getLogger("tradebot")
 
 
+def _to_journal_entry(
+    trade: ClosedTrade, pip_size: float, pip_value_per_standard_lot: float, mode: str
+) -> JournalEntry:
+    pip_diff = (
+        (trade.exit_price - trade.entry_price) / pip_size
+        if trade.direction == "long"
+        else (trade.entry_price - trade.exit_price) / pip_size
+    )
+    pnl = pip_diff * pip_value_per_standard_lot * trade.lots
+
+    risk = abs(trade.entry_price - trade.initial_stop)
+    realized = (
+        trade.exit_price - trade.entry_price
+        if trade.direction == "long"
+        else trade.entry_price - trade.exit_price
+    )
+    r_multiple = realized / risk if risk > 0 else 0.0
+
+    return JournalEntry(
+        time=dt.datetime.now(dt.timezone.utc).isoformat(),
+        direction=trade.direction,
+        lots=trade.lots,
+        entry_price=trade.entry_price,
+        exit_price=trade.exit_price,
+        initial_stop=trade.initial_stop,
+        pnl=pnl,
+        r_multiple=r_multiple,
+        mode=mode,
+    )
+
+
 class TradingBot:
     def __init__(
         self,
         config: StrategyConfig,
         broker: Broker,
+        journal_path: str,
+        mode: str,
         history_bars: int = 500,
         poll_seconds: int = 30,
     ) -> None:
         self.config = config
         self.broker = broker
+        self.mode = mode
         self.history_bars = history_bars
         self.poll_seconds = poll_seconds
         self.symbol = config["symbol"]
@@ -47,6 +84,11 @@ class TradingBot:
         self.guard = RiskGuard(
             config.get("risk", "daily_loss_limit_pct"),
             config.get("risk", "max_concurrent_positions"),
+        )
+        self.journal = TradeJournal(journal_path)
+        self.edge_guard = EdgeConfidenceGuard(
+            min_sample_size=config.get("edge_guard", "min_sample_size", default=30),
+            degradation_threshold_r=config.get("edge_guard", "degradation_threshold_r", default=0.0),
         )
         self._acted_on: set[pd.Timestamp] = set()
         # position_id -> initial_stop, needed by the trailing-stop calculation
@@ -67,6 +109,8 @@ class TradingBot:
         # on the broker's side already, so this is a no-op there.
         if hasattr(self.broker, "check_exits"):
             self.broker.check_exits(latest_bar)
+
+        self._record_closed_trades()
 
         be_trigger = self.config.get("trailing_stop", "breakeven_trigger_r")
         trail_mult = self.config.get("trailing_stop", "trail_atr_multiplier")
@@ -96,7 +140,30 @@ class TradingBot:
                 log.info("Moving stop for position %s to %.5f", pos.id, new_stop)
                 self.broker.modify_stop(pos.id, new_stop)
 
+    def _record_closed_trades(self) -> None:
+        """Journal any trade that closed since the last poll.
+
+        Covers both a paper-broker fill against a bar (check_exits, above)
+        and a real broker-side SL/TP fill on MT5Broker, which happens
+        without this bot ever calling close_position() itself.
+        """
+        if not hasattr(self.broker, "pop_recent_closes"):
+            return
+
+        pip_size = self.config.get("risk", "pip_size")
+        pip_value = self.config.get("risk", "pip_value_per_standard_lot")
+
+        for ct in self.broker.pop_recent_closes():
+            self._initial_stops.pop(ct.position_id, None)
+            self._best_price.pop(ct.position_id, None)
+            self.journal.record(_to_journal_entry(ct, pip_size, pip_value, self.mode))
+
     def _maybe_open_new_signal(self, df: pd.DataFrame) -> None:
+        edge_status = self.edge_guard.evaluate(self.journal.load_all())
+        if not edge_status.can_trade:
+            log.warning("Edge confidence guard blocking new entries: %s", edge_status.reason)
+            return
+
         signals = generate_signals(df, self.config)
         if not signals:
             return
