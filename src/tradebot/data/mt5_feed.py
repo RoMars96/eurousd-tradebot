@@ -13,6 +13,8 @@ import datetime as dt
 
 import pandas as pd
 
+from tradebot.data.broker_time import correct_broker_index_to_utc
+
 try:
     import MetaTrader5 as mt5
 except ImportError as exc:  # pragma: no cover - exercised only off-Windows
@@ -56,8 +58,21 @@ def disconnect() -> None:
         mt5.shutdown()
 
 
-def fetch_rates(symbol: str, timeframe: str, count: int) -> pd.DataFrame:
-    """Fetch the most recent `count` completed candles for symbol/timeframe."""
+def fetch_rates(
+    symbol: str,
+    timeframe: str,
+    count: int,
+    broker_utc_offset_standard: int = 0,
+    broker_utc_offset_dst: int = 0,
+    broker_dst_rule: str = "none",
+) -> pd.DataFrame:
+    """Fetch the most recent `count` completed candles for symbol/timeframe.
+
+    The `broker_utc_offset_*`/`broker_dst_rule` args correct MT5's
+    broker-server-time timestamps to true UTC -- see
+    tradebot.data.broker_time. Defaults are a no-op for backward
+    compatibility; pass config['broker_time'] values in real use.
+    """
     _require_mt5()
     tf_attr = _TIMEFRAME_MAP.get(timeframe.upper())
     if tf_attr is None:
@@ -71,12 +86,22 @@ def fetch_rates(symbol: str, timeframe: str, count: int) -> pd.DataFrame:
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
     df = df.set_index("time").sort_index()
+    df.index = correct_broker_index_to_utc(
+        df.index, broker_utc_offset_standard, broker_utc_offset_dst, broker_dst_rule
+    )
+    df = df.sort_index()  # correction can locally reorder the ~2 bars right at a DST boundary
     df = df.rename(columns={"tick_volume": "volume"})
     return df[["open", "high", "low", "close", "volume"]]
 
 
 def fetch_rates_range(
-    symbol: str, timeframe: str, start: dt.datetime, end: dt.datetime
+    symbol: str,
+    timeframe: str,
+    start: dt.datetime,
+    end: dt.datetime,
+    broker_utc_offset_standard: int = 0,
+    broker_utc_offset_dst: int = 0,
+    broker_dst_rule: str = "none",
 ) -> pd.DataFrame:
     """Fetch all completed candles between `start` and `end` (both UTC).
 
@@ -85,6 +110,14 @@ def fetch_rates_range(
     carry many years of M15/M1 history for a major pair like EURUSD. MT5
     caps a single call's result set, so this pages through the range in
     chunks automatically.
+
+    Note: `start`/`end` are passed to MT5 as given (true UTC) to bound the
+    query -- only the *returned* candle timestamps are corrected via
+    `broker_utc_offset_*`. If MT5 actually interprets the query bounds in
+    server time rather than UTC, the range fetched could be off by a few
+    hours at the edges; this hasn't been verified live (see
+    scripts/check_broker_time_offset.py). Pad --start/--end by a day if
+    you need to be sure not to miss boundary bars.
     """
     _require_mt5()
     tf_attr = _TIMEFRAME_MAP.get(timeframe.upper())
@@ -119,5 +152,9 @@ def fetch_rates_range(
     df = pd.concat(chunks, ignore_index=True)
     df = df.set_index("time").sort_index()
     df = df[~df.index.duplicated(keep="first")]
+    df.index = correct_broker_index_to_utc(
+        df.index, broker_utc_offset_standard, broker_utc_offset_dst, broker_dst_rule
+    )
+    df = df.sort_index()  # correction can locally reorder the ~2 bars right at a DST boundary
     df = df.rename(columns={"tick_volume": "volume"})
     return df[["open", "high", "low", "close", "volume"]]

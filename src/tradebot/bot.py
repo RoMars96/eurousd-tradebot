@@ -13,8 +13,11 @@ switching to `mode="live"`.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import time
+from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -73,6 +76,9 @@ class TradingBot:
         mode: str,
         history_bars: int = 500,
         poll_seconds: int = 30,
+        heartbeat_path: str | None = None,
+        reconnect_fn: Callable[[], None] | None = None,
+        max_consecutive_failures_before_reconnect: int = 3,
     ) -> None:
         self.config = config
         self.broker = broker
@@ -81,6 +87,9 @@ class TradingBot:
         self.poll_seconds = poll_seconds
         self.symbol = config["symbol"]
         self.timeframe = config["entry_timeframe"]
+        self.heartbeat_path = heartbeat_path
+        self.reconnect_fn = reconnect_fn
+        self.max_consecutive_failures_before_reconnect = max_consecutive_failures_before_reconnect
 
         self.guard = RiskGuard(
             config.get("risk", "daily_loss_limit_pct"),
@@ -96,9 +105,17 @@ class TradingBot:
         # position_id -> initial_stop, needed by the trailing-stop calculation
         self._initial_stops: dict[str, float] = {}
         self._best_price: dict[str, float] = {}
+        self._consecutive_failures = 0
 
     def _fetch_history(self) -> pd.DataFrame:
-        return mt5_feed.fetch_rates(self.symbol, self.timeframe, self.history_bars)
+        return mt5_feed.fetch_rates(
+            self.symbol,
+            self.timeframe,
+            self.history_bars,
+            broker_utc_offset_standard=self.config.get("broker_time", "utc_offset_hours_standard", default=0),
+            broker_utc_offset_dst=self.config.get("broker_time", "utc_offset_hours_dst", default=0),
+            broker_dst_rule=self.config.get("broker_time", "dst_rule", default="none"),
+        )
 
     def _manage_open_positions(self, df: pd.DataFrame) -> None:
         atr_period = self.config.get("displacement", "atr_period")
@@ -220,11 +237,51 @@ class TradingBot:
         self._manage_open_positions(df)
         self._maybe_open_new_signal(df)
 
+    def _write_heartbeat(self, error: str | None) -> None:
+        """Write loop status to disk so something external can tell if this
+        bot has silently stalled during unattended 24/5 running."""
+        if not self.heartbeat_path:
+            return
+        payload = {
+            "last_loop_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "consecutive_failures": self._consecutive_failures,
+            "last_error": error,
+            "mode": self.mode,
+            "symbol": self.symbol,
+        }
+        try:
+            path = Path(self.heartbeat_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload))
+        except Exception:
+            log.exception("Failed to write heartbeat file at %s", self.heartbeat_path)
+
     def run_forever(self) -> None:
         log.info("Starting trading bot for %s on %s", self.symbol, self.timeframe)
         while True:
             try:
                 self.run_once()
-            except Exception:
-                log.exception("Error in trading loop iteration")
+            except Exception as exc:
+                self._consecutive_failures += 1
+                log.exception(
+                    "Error in trading loop iteration (%d consecutive)", self._consecutive_failures
+                )
+                self._write_heartbeat(error=str(exc))
+
+                if (
+                    self.reconnect_fn is not None
+                    and self._consecutive_failures >= self.max_consecutive_failures_before_reconnect
+                ):
+                    log.warning(
+                        "Attempting MT5 reconnect after %d consecutive failures",
+                        self._consecutive_failures,
+                    )
+                    try:
+                        self.reconnect_fn()
+                        self._consecutive_failures = 0
+                    except Exception:
+                        log.exception("Reconnect attempt failed; will retry on next failure threshold")
+            else:
+                self._consecutive_failures = 0
+                self._write_heartbeat(error=None)
             time.sleep(self.poll_seconds)

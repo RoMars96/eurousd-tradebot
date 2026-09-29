@@ -35,6 +35,10 @@ def _journal_path(data_dir: Path, symbol: str, mode: str) -> Path:
     return data_dir / f"{mode}_journal_{symbol}.jsonl"
 
 
+def _heartbeat_path(data_dir: Path, symbol: str, mode: str) -> Path:
+    return data_dir / f"heartbeat_{mode}_{symbol}.json"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["paper", "live"], required=True)
@@ -75,13 +79,26 @@ def main() -> None:
 
     mt5_feed.connect(args.login, args.password, args.server)
 
+    def reconnect() -> None:
+        mt5_feed.disconnect()
+        mt5_feed.connect(args.login, args.password, args.server)
+
     if args.mode == "live":
         broker = MT5Broker(symbol)
     else:
         broker = PaperBroker(args.paper_equity)
 
     journal_path = _journal_path(data_dir, symbol, args.mode)
-    bot = TradingBot(config, broker, str(journal_path), args.mode, poll_seconds=args.poll_seconds)
+    heartbeat_path = _heartbeat_path(data_dir, symbol, args.mode)
+    bot = TradingBot(
+        config,
+        broker,
+        str(journal_path),
+        args.mode,
+        poll_seconds=args.poll_seconds,
+        heartbeat_path=str(heartbeat_path),
+        reconnect_fn=reconnect,
+    )
     try:
         bot.run_forever()
     finally:

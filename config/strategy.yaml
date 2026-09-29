@@ -4,6 +4,19 @@
 symbol: EURUSD
 entry_timeframe: M15
 
+# MT5 timestamps candles in the BROKER's server time, not UTC. Session
+# windows above (Asian/London/NY) are defined in true UTC, so this
+# correction has to run before anything else touches the data -- see
+# src/tradebot/data/broker_time.py. Defaults below are IC Markets' commonly
+# cited convention (GMT+2 standard / GMT+3 during EU DST) -- UNVERIFIED
+# against a live connection since this was built without network access.
+# Run `python scripts/check_broker_time_offset.py` once you have MT5
+# running to confirm these numbers before trusting any session signal.
+broker_time:
+  utc_offset_hours_standard: 2
+  utc_offset_hours_dst: 3
+  dst_rule: eu   # "eu" (last Sunday Mar/Oct, 01:00 UTC) or "none" (always use standard offset)
+
 sessions:
   # UTC hour ranges used to build the "resting liquidity" range.
   asian:

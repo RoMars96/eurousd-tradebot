@@ -42,6 +42,7 @@ config/strategy.yaml          strategy & risk parameters
 src/tradebot/
   data/loader.py               historical OHLC CSV loader
   data/mt5_feed.py              live MT5 candle feed (Windows/MT5-terminal only)
+  data/broker_time.py           broker-server-time -> UTC correction (DST-aware)
   strategy/                     sessions, swing pivots, ATR, signal generation
   risk/                         position sizing, trailing stop, daily-loss guard, edge-confidence guard
   news/                          economic calendar fetch/cache + blackout filter
@@ -53,6 +54,7 @@ scripts/
   run_backtest.py                CLI: backtest a CSV of historical data
   run_live.py                    CLI: run live/paper against a running MT5 terminal
   check_news_calendar.py         CLI: smoke-test the Finnhub calendar integration
+  check_broker_time_offset.py    CLI: verify broker_time config against a live MT5 connection
 tests/                          pytest suite (synthetic data, no MT5 required)
 ```
 
@@ -93,6 +95,25 @@ python scripts/fetch_mt5_history.py --login <login> --password *** \
 This writes a CSV directly in the format `run_backtest.py` expects. (You
 can also do this manually: MT5 -> View -> History Center -> EURUSD -> M15
 -> Download, then right-click the chart -> "Save As".)
+
+### Broker server time correction (verify before trusting any session signal)
+
+MT5 timestamps candles in the **broker's server time**, not UTC -- but
+every session window in this strategy (`sessions:` in the config) is
+defined in true UTC. `config/strategy.yaml`'s `broker_time` section
+corrects for this, defaulting to IC Markets' commonly cited convention
+(GMT+2 standard / GMT+3 during EU DST). That default is **unverified**
+against a live connection (this repo was built without network access) --
+confirm it once you have MT5 running:
+
+```bash
+python scripts/check_broker_time_offset.py --login <login> --password *** --server "ICMarkets-Demo"
+```
+
+If it reports a mismatch, update `broker_time.utc_offset_hours_standard` /
+`utc_offset_hours_dst` in the config. Do this before your first real
+backtest with fetched data, not after -- a wrong offset silently shifts
+which candles get bucketed into the Asian/London/NY session windows.
 
 ### Backtest against historical data
 
@@ -164,3 +185,42 @@ than trade blind to a missed calendar refresh.
 
 Tune these in `config/strategy.yaml` -- nothing here is a recommendation to
 run with different (larger) numbers on a live account.
+`safety_ceilings.max_risk_per_trade_pct` hard-caps this at 2% regardless of
+what `risk.risk_per_trade_pct` is set to; the config refuses to load above
+it. That's deliberate -- see PHILOSOPHY.md. A small account (e.g. a $100
+demo) can hit `min_lot` flooring, which pushes real risk above the
+configured percent on wide-stop trades; `calculate_lots` logs a warning
+when that happens rather than doing it silently.
+
+## Running 24/5 (VPS)
+
+The bot needs MT5 running continuously on a Windows machine. A cheap
+Windows VPS (~$5-15/mo -- Contabo, Vultr, or a forex-specific VPS
+provider) is the usual setup once you're past paper trading on your own
+PC: RDP in, install MT5 + Python 3.11+, clone this repo, `pip install -e
+".[mt5,dev]"`, and run `scripts/run_live.py` in a way that survives
+reboots (a Windows Scheduled Task set to run at startup, or `pythonw` in
+the Startup folder). The bot's own reconnect logic (in `bot.py`) will
+re-initialize the MT5 connection after a few consecutive failures, but it
+can't recover from the VPS itself rebooting without something restarting
+the process.
+
+Each loop writes `data/heartbeat_<mode>_<symbol>.json` (last successful
+loop time, consecutive failure count, last error) -- point an external
+uptime check at that file's `last_loop_utc` if you want to be alerted when
+the bot goes quiet, since a fully silent failure is worse than a loud one.
+
+## Before going live: checklist
+
+1. Real-data backtest (`run_backtest.py`) with `sufficient_sample: true`
+   and an expectancy you're comfortable with -- not yet done, this is the
+   actual next step.
+2. `check_broker_time_offset.py` confirms the `broker_time` config against
+   your real MT5 connection.
+3. `check_news_calendar.py` confirms the Finnhub integration if you're
+   using `news_filter`.
+4. `run_live.py --mode paper` accumulates
+   `edge_guard.min_paper_trades_before_live` (default 30) closed trades --
+   the bot won't let `--mode live` start before this regardless.
+5. You're comfortable with `risk.risk_per_trade_pct` and the account size
+   you're funding -- see PHILOSOPHY.md before changing either impulsively.

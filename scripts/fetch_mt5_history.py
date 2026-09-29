@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from tradebot.config import DEFAULT_CONFIG_PATH, StrategyConfig
 from tradebot.data import mt5_feed
 
 
@@ -35,14 +36,24 @@ def main() -> None:
     parser.add_argument("--start", required=True, help="YYYY-MM-DD (UTC)")
     parser.add_argument("--end", required=True, help="YYYY-MM-DD (UTC)")
     parser.add_argument("--out", required=True, help="Output CSV path")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="For broker_time correction")
     args = parser.parse_args()
 
+    config = StrategyConfig.from_yaml(args.config)
     start = dt.datetime.strptime(args.start, "%Y-%m-%d")
     end = dt.datetime.strptime(args.end, "%Y-%m-%d")
 
     mt5_feed.connect(args.login, args.password, args.server)
     try:
-        df = mt5_feed.fetch_rates_range(args.symbol, args.timeframe, start, end)
+        df = mt5_feed.fetch_rates_range(
+            args.symbol,
+            args.timeframe,
+            start,
+            end,
+            broker_utc_offset_standard=config.get("broker_time", "utc_offset_hours_standard", default=0),
+            broker_utc_offset_dst=config.get("broker_time", "utc_offset_hours_dst", default=0),
+            broker_dst_rule=config.get("broker_time", "dst_rule", default="none"),
+        )
     finally:
         mt5_feed.disconnect()
 

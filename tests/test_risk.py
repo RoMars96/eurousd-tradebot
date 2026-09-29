@@ -28,6 +28,30 @@ def test_calculate_lots_respects_min_lot_floor():
     assert lots == pytest.approx(0.01)
 
 
+def test_lot_floor_warns_when_it_meaningfully_inflates_risk(caplog):
+    with caplog.at_level("WARNING", logger="tradebot"):
+        calculate_lots(
+            equity=100,
+            risk_pct=0.5,
+            stop_distance_price=0.0020,  # ideal lots (0.0025) well under the 0.01 floor
+            pip_size=0.0001,
+            pip_value_per_standard_lot=10.0,
+        )
+    assert any("floored" in record.message for record in caplog.records)
+
+
+def test_no_warning_when_floor_is_not_binding(caplog):
+    with caplog.at_level("WARNING", logger="tradebot"):
+        calculate_lots(
+            equity=10000,
+            risk_pct=0.5,
+            stop_distance_price=0.0020,  # ideal lots (0.25) well above the floor
+            pip_size=0.0001,
+            pip_value_per_standard_lot=10.0,
+        )
+    assert not any("floored" in record.message for record in caplog.records)
+
+
 def test_trailing_stop_moves_to_breakeven_at_trigger():
     new_stop = update_trailing_stop(
         direction="long",
