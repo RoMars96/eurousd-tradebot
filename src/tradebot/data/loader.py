@@ -1,7 +1,8 @@
 """Historical OHLC data loading.
 
-Accepts either a plain CSV (columns time/open/high/low/close, already in
-UTC -- e.g. the output of scripts/fetch_mt5_history.py) or MT5's native
+Accepts either a plain CSV already in UTC (columns time/open/high/low/close
+-- e.g. from scripts/fetch_mt5_history.py, or dukascopy-node's CSV with an
+epoch-milliseconds `timestamp` column) or MT5's native
 "Export Bars" file (tab-separated, <DATE>/<TIME>/<OPEN>... headers). The
 native export is stamped in BROKER server time, not UTC: callers must run
 it through tradebot.data.broker_time.correct_broker_index_to_utc, which
@@ -56,6 +57,18 @@ def _load_mt5_export(path: str | Path) -> pd.DataFrame:
     return df.rename(columns={"tickvol": "volume"})
 
 
+def _epoch_unit(values: pd.Series) -> str:
+    """Epoch timestamps come in s (MT5 API), ms (dukascopy-node), etc."""
+    magnitude = abs(float(values.iloc[0]))
+    if magnitude > 1e17:
+        return "ns"
+    if magnitude > 1e14:
+        return "us"
+    if magnitude > 1e11:
+        return "ms"
+    return "s"
+
+
 def load_ohlc_csv(path: str | Path, tz: str = "UTC") -> pd.DataFrame:
     """Load an OHLC CSV into a DatetimeIndex-ed DataFrame.
 
@@ -78,7 +91,10 @@ def load_ohlc_csv(path: str | Path, tz: str = "UTC") -> pd.DataFrame:
             f"found columns {list(df.columns)}"
         )
 
-    df["time"] = pd.to_datetime(df["time"], utc=True)
+    if pd.api.types.is_numeric_dtype(df["time"]):
+        df["time"] = pd.to_datetime(df["time"], unit=_epoch_unit(df["time"]), utc=True)
+    else:
+        df["time"] = pd.to_datetime(df["time"], utc=True)
     if tz != "UTC":
         df["time"] = df["time"].dt.tz_convert(tz)
 

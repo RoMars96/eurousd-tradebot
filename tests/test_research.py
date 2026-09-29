@@ -168,6 +168,20 @@ def test_mt5_native_export_is_parsed_and_broker_time_corrected(tmp_path):
     assert corrected.index[0] == pd.Timestamp("2026-01-15 08:00", tz="UTC")  # GMT+2 in January
 
 
+def test_dukascopy_node_csv_with_epoch_ms_timestamps(tmp_path):
+    path = tmp_path / "gbpjpy-m15-bid.csv"
+    path.write_text(
+        "timestamp,open,high,low,close\n"
+        "1736899200000,190.1,190.2,190.0,190.15\n"  # 2025-01-15 00:00 UTC
+        "1736900100000,190.15,190.25,190.05,190.2\n"
+    )
+    config = StrategyConfig.from_yaml("config/gbpjpy.yaml")
+    df, was_corrected = load_ohlc_for_research(path, config)
+    assert not was_corrected  # already UTC, no broker-time shift
+    assert df.index[0] == pd.Timestamp("2025-01-15 00:00", tz="UTC")
+    assert df.index[1] - df.index[0] == pd.Timedelta(minutes=15)
+
+
 # --- the pipeline itself ----------------------------------------------------
 
 def test_pipeline_finds_no_edge_in_pure_noise(tmp_path):
