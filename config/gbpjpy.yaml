@@ -6,7 +6,9 @@
 symbol: GBPJPY
 entry_timeframe: M15
 
-# UNVERIFIED IC Markets convention -- confirm with scripts/check_broker_time_offset.py.
+# IC Markets (ICMarketsSC-Demo). DST offset verified 2026-09-29: Market Watch
+# showed 08:15 at 05:15 UTC (UTC+3). The standard (+2) offset is the
+# commonly cited winter value -- re-check after the last Sunday of October.
 broker_time:
   utc_offset_hours_standard: 2
   utc_offset_hours_dst: 3

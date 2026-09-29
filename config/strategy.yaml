@@ -7,11 +7,10 @@ entry_timeframe: M15
 # MT5 timestamps candles in the BROKER's server time, not UTC. Session
 # windows above (Asian/London/NY) are defined in true UTC, so this
 # correction has to run before anything else touches the data -- see
-# src/tradebot/data/broker_time.py. Defaults below are IC Markets' commonly
-# cited convention (GMT+2 standard / GMT+3 during EU DST) -- UNVERIFIED
-# against a live connection since this was built without network access.
-# Run `python scripts/check_broker_time_offset.py` once you have MT5
-# running to confirm these numbers before trusting any session signal.
+# src/tradebot/data/broker_time.py. Values below are IC Markets'
+# (GMT+2 standard / GMT+3 during EU DST). The DST value was verified
+# 2026-09-29 against ICMarketsSC-Demo's Market Watch clock (UTC+3); re-check
+# the standard value after the last Sunday of October.
 broker_time:
   utc_offset_hours_standard: 2
   utc_offset_hours_dst: 3
