@@ -49,6 +49,8 @@ class ResearchReport:
     final_p_label: str
     family_fraction_positive: float | None
     checks: list[tuple[str, bool]] = field(default_factory=list)
+    unit: str = "pips"
+    benchmark_label: str = "Benchmark"
     benchmark_summary: ev.Summary | None = None
     holdout_summary: ev.Summary | None = None
     holdout_p: float | None = None
@@ -94,6 +96,8 @@ def _finish(
     family_key: str,
     reveal_holdout: bool,
     benchmark: pd.DataFrame | None = None,
+    benchmark_label: str = "Benchmark",
+    unit: str = "pips",
 ) -> ResearchReport:
     n_perm = research_cfg.get("research", "permutations", default=1000)
     significance = research_cfg.get("research", "significance", default=0.05)
@@ -161,6 +165,8 @@ def _finish(
         final_p_label=final_p_label,
         family_fraction_positive=family_fraction,
         checks=checks,
+        unit=unit,
+        benchmark_label=benchmark_label,
     )
 
     if benchmark is not None:
@@ -291,17 +297,80 @@ def run_carry(
         family_key="variant",
         reveal_holdout=reveal_holdout,
         benchmark=benchmark,
+        benchmark_label="Benchmark (always long + carry)",
     )
 
 
-def _fmt_summary(s: ev.Summary) -> str:
+def run_smallcap(
+    ds,
+    config: StrategyConfig,
+    data_label: str,
+    log: ResearchLog,
+    rng: np.random.Generator,
+    reveal_holdout: bool = False,
+) -> ResearchReport:
+    from tradebot.research.hypotheses import smallcap_momentum as sc
+    from tradebot.stocks.setups import TradeParams
+
+    section = config.get("research", "smallcap", default={}) or {}
+    pillars_cfg = config["pillars"]
+    params = TradeParams.from_config(config.get("trade", default={}) or {})
+    rvols = section.get("min_premarket_rvol", [0.5, 1.0])
+    dates = ds.dates
+    if len(dates) < 50:
+        raise ValueError(f"only {len(dates)} scanned days; need at least 50 for a meaningful test")
+    holdout_start = _split_time(dates, config.get("research", "holdout_fraction", default=0.2))
+
+    candidates: list[Candidate] = []
+    for setup in section.get("setups", list(sc.SETUPS)):
+        for min_rvol in rvols:
+            for require_news in section.get("require_news", [True, False]):
+                trades = sc.config_trades(ds, setup, min_rvol, require_news, pillars_cfg, params)
+                candidates.append(
+                    Candidate({"setup": setup, "min_rvol": min_rvol, "require_news": require_news}, trades)
+                )
+
+    seeds = section.get("random_entry_seeds", 20)
+    bench_rng = np.random.default_rng(12345)
+    benchmark = pd.concat(
+        [sc.config_trades(ds, "random", min(rvols), False, pillars_cfg, params, bench_rng) for _ in range(seeds)]
+    )
+
+    def sign_flip_p(candidate: Candidate, n_perm: int) -> float:
+        return ev.sign_flip_pvalue(candidate.trades["ret"], n_perm, rng)
+
+    return _finish(
+        hypothesis="smallcap_momentum",
+        data_label=data_label,
+        candidates=candidates,
+        research_start=dates[0],
+        holdout_start=holdout_start,
+        section=section,
+        research_cfg=config,
+        log=log,
+        rng=rng,
+        final_p_fn=sign_flip_p,
+        final_p_label="sign-flip",
+        family_key="setup",
+        reveal_holdout=reveal_holdout,
+        benchmark=benchmark,
+        benchmark_label=f"Benchmark (random entry, same gappers, {seeds} runs pooled)",
+        unit="R",
+    )
+
+
+def _fmt_summary(s: ev.Summary, unit: str = "pips") -> str:
+    precision = 3 if unit == "R" else 2
     return (
-        f"n={s.n:<5} mean={s.mean:+8.2f} pips  t={s.t_stat:+5.2f}  "
-        f"hit={s.hit_rate * 100:5.1f}%  total={s.total:+10.1f} pips"
+        f"n={s.n:<5} mean={s.mean:+8.{precision}f} {unit}  t={s.t_stat:+5.2f}  "
+        f"hit={s.hit_rate * 100:5.1f}%  total={s.total:+10.1f} {unit}"
     )
 
 
 def format_report(r: ResearchReport) -> str:
+    def fmt(s: ev.Summary) -> str:
+        return _fmt_summary(s, r.unit)
+
     lines = [
         f"=== {r.hypothesis} on {r.data_label} ===",
         f"Research period: {r.research_start} -> {r.holdout_start} (holdout sealed after this)",
@@ -309,7 +378,7 @@ def format_report(r: ResearchReport) -> str:
         "Parameter grid (research period, net of costs):",
     ]
     for params, s in sorted(r.grid, key=lambda x: x[1].t_stat, reverse=True):
-        lines.append(f"  {str(params):<60} {_fmt_summary(s)}")
+        lines.append(f"  {str(params):<60} {fmt(s)}")
 
     lines += ["", "Walk-forward (parameters chosen on the past, scored on the future):"]
     for f in r.walk_forward.folds:
@@ -317,15 +386,15 @@ def format_report(r: ResearchReport) -> str:
         if f.chosen_params is None:
             lines.append(label + "no configuration had enough trades to choose from")
         else:
-            lines.append(label + f"{f.chosen_params}  {_fmt_summary(ev.summarize(f.test_trades['ret']))}")
-    lines.append(f"  Out-of-sample total: {_fmt_summary(r.oos_summary)}  p={r.oos_p:.4f}")
+            lines.append(label + f"{f.chosen_params}  {fmt(ev.summarize(f.test_trades['ret']))}")
+    lines.append(f"  Out-of-sample total: {fmt(r.oos_summary)}  p={r.oos_p:.4f}")
 
     if r.benchmark_summary is not None:
-        lines.append(f"  Benchmark (always long + carry): {_fmt_summary(r.benchmark_summary)}")
+        lines.append(f"  {r.benchmark_label}: {fmt(r.benchmark_summary)}")
 
     lines += ["", f"Final configuration (best on full research period): {r.final_params}"]
     if r.final_summary is not None:
-        lines.append(f"  {_fmt_summary(r.final_summary)}  {r.final_p_label} p={r.final_p:.4f}")
+        lines.append(f"  {fmt(r.final_summary)}  {r.final_p_label} p={r.final_p:.4f}")
     if r.family_fraction_positive is not None:
         lines.append(f"  Neighbouring configs profitable: {r.family_fraction_positive * 100:.0f}%")
 
@@ -352,5 +421,5 @@ def format_report(r: ResearchReport) -> str:
                 "  WARNING: this holdout was already revealed for this hypothesis/data. "
                 "It is no longer an unbiased test."
             )
-        lines.append(f"  {_fmt_summary(r.holdout_summary)}  p={r.holdout_p:.4f}")
+        lines.append(f"  {fmt(r.holdout_summary)}  p={r.holdout_p:.4f}")
     return "\n".join(lines)
